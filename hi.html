@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Vẽ Hình Học - Groq AI (Free)</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #222; color: #eee; display: flex; flex-direction: column; align-items: center; padding: 20px; }
+        .container { max-width: 800px; width: 100%; }
+        textarea, input, select { width: 100%; padding: 10px; margin: 5px 0; background: #333; color: #fff; border: 1px solid #555; border-radius: 5px; font-size: 14px; }
+        .btn { padding: 10px 20px; background: #0a84ff; border: none; color: #fff; font-weight: bold; cursor: pointer; border-radius: 5px; margin: 5px 0; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        canvas { border: 1px solid #555; background: #000; margin-top: 15px; display: block; width: 100%; }
+        .error { color: #ff5555; }
+        .info { color: #aaa; font-size: 14px; line-height: 1.5; }
+        a { color: #0a84ff; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>🖌️ Vẽ Hình Tự Động (Groq – Miễn Phí)</h2>
+        <p class="info">
+            🔑 Lấy key tại <a href="https://console.groq.com/keys" target="_blank">Groq Console</a>.<br>
+            📝 Dán đề bài hình học bằng tiếng Việt.
+        </p>
+        <input type="password" id="apiKey" placeholder="Groq API Key (gsk_...)" />
+        <select id="model" style="padding: 10px; background: #333; color: #fff; border-radius: 5px; margin: 5px 0; width: 100%;">
+            <option value="llama-3.3-70b-versatile" selected>Llama 3.3 70B (Mạnh mẽ)</option>
+            <option value="qwen3-32b">Qwen 3 32B (Nhanh)</option>
+            <option value="llama-3.1-8b-instant">Llama 3.1 8B (Rất nhanh)</option>
+        </select>
+        <textarea id="problem" rows="5" placeholder='Ví dụ: Cho hình vuông ABCD, lấy điểm M trên cạnh BC. Qua B kẻ đường thẳng vuông góc với DM tại H, kéo dài BH cắt DC tại K.'></textarea>
+        <button class="btn" id="sendBtn" onclick="handleSend()">🚀 Gửi đề & Vẽ</button>
+        <div id="status" class="info"></div>
+        <div id="error" class="error"></div>
+        <canvas id="canvas" width="700" height="500"></canvas>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const statusDiv = document.getElementById('status');
+        const errorDiv = document.getElementById('error');
+        const objects = { points: {}, lines: {}, segments: {} };
+
+        function clearAll() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            objects.points = {}; objects.lines = {}; objects.segments = {};
+            errorDiv.textContent = ''; statusDiv.textContent = '';
+        }
+        function addPoint(name, x, y) { objects.points[name] = {x: parseFloat(x), y: parseFloat(y)}; }
+        function getPoint(name) { if (!(name in objects.points)) throw new Error(`Điểm ${name} chưa định nghĩa.`); return objects.points[name]; }
+        function addLine(name, p1Name, p2Name, type='segment') {
+            const p1 = getPoint(p1Name), p2 = getPoint(p2Name);
+            objects.lines[name] = {p1, p2, type};
+        }
+        function pointOnSegment(name, p1Name, p2Name, t) {
+            const p1 = getPoint(p1Name), p2 = getPoint(p2Name);
+            addPoint(name, p1.x + t * (p2.x - p1.x), p1.y + t * (p2.y - p1.y));
+        }
+        function lineIntersection(name, l1Name, l2Name) {
+            const l1 = objects.lines[l1Name], l2 = objects.lines[l2Name];
+            if (!l1 || !l2) throw new Error(`Đường ${l1Name} hoặc ${l2Name} chưa định nghĩa.`);
+            const a = l1.p1, b = l1.p2, c = l2.p1, d = l2.p2;
+            const denom = (a.x - b.x) * (c.y - d.y) - (a.y - b.y) * (c.x - d.x);
+            if (Math.abs(denom) < 1e-9) throw new Error('Hai đường song song hoặc trùng.');
+            const t = ((a.x - c.x) * (c.y - d.y) - (a.y - c.y) * (c.x - d.x)) / denom;
+            addPoint(name, a.x + t * (b.x - a.x), a.y + t * (b.y - a.y));
+        }
+        function perpendicularLine(name, throughName, lineName) {
+            const P = getPoint(throughName);
+            const L = objects.lines[lineName];
+            if (!L) throw new Error(`Đường ${lineName} chưa định nghĩa để kẻ vuông góc.`);
+            const dx = L.p2.x - L.p1.x, dy = L.p2.y - L.p1.y;
+            objects.lines[name] = { p1: P, p2: {x: P.x - dy, y: P.y + dx}, type: 'line' };
+        }
+
+        function redraw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            for (let name in objects.lines) {
+                const l = objects.lines[name];
+                ctx.beginPath(); ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5;
+                if (l.type === 'segment') {
+                    ctx.moveTo(l.p1.x, l.p1.y); ctx.lineTo(l.p2.x, l.p2.y);
+                } else if (l.type === 'line') {
+                    const dx = l.p2.x - l.p1.x, dy = l.p2.y - l.p1.y;
+                    const len = Math.sqrt(dx*dx+dy*dy) || 1;
+                    const scale = 2000 / len;
+                    ctx.moveTo(l.p1.x - dx/len*scale, l.p1.y - dy/len*scale);
+                    ctx.lineTo(l.p1.x + dx/len*scale, l.p1.y + dy/len*scale);
+                }
+                ctx.stroke();
+            }
+            for (let name in objects.points) {
+                const p = objects.points[name];
+                ctx.beginPath(); ctx.fillStyle = '#ffcc00'; ctx.arc(p.x, p.y, 3, 0, 2*Math.PI); ctx.fill();
+                ctx.font = '14px Arial'; ctx.fillStyle = '#ffffff'; ctx.fillText(name, p.x + 5, p.y - 5);
+            }
+        }
+
+        function executeCommand(cmd) {
+            const s = cmd.trim(); if (!s || s.startsWith('//')) return;
+            let m;
+            m = s.match(/^point\s+(\w+)\s*=\s*([\d.]+)\s+([\d.]+)/);
+            if (m) return addPoint(m[1], m[2], m[3]);
+            m = s.match(/^point\s+(\w+)\s*=\s*on\s+segment\s+(\w+)\s+(\w+)\s+([\d.]+)/);
+            if (m) return pointOnSegment(m[1], m[2], m[3], m[4]);
+            m = s.match(/^point\s+(\w+)\s*=\s*intersection\s+(\w+)\s+(\w+)/);
+            if (m) return lineIntersection(m[1], m[2], m[3]);
+            m = s.match(/^line\s+(\w+)\s*=\s*through\s+(\w+)\s+(\w+)/);
+            if (m) return addLine(m[1], m[2], m[3], 'segment');
+            m = s.match(/^line\s+(\w+)\s*=\s*through\s+(\w+)\s+perpendicular\s+(\w+)/);
+            if (m) return perpendicularLine(m[1], m[2], m[3]);
+            m = s.match(/^segment\s+(\w+)\s*=\s*(\w+)\s+(\w+)/);
+            if (m) return addLine(m[1], m[2], m[3], 'segment');
+        }
+
+        function runGeoScript(script) {
+            objects.points = {}; objects.lines = {};
+            script.split('\n').filter(l => l.trim()).forEach(executeCommand);
+            redraw();
+        }
+
+        async function callGroq(apiKey, problemText, model) {
+            const systemPrompt = `Bạn là trợ lý chuyển bài toán hình học phẳng sang tập lệnh GeoScript.
+Cú pháp:
+- point <tên> = <x> <y>
+- point <tên> = on segment <điểm1> <điểm2> <tỉ lệ (0->1)>
+- line <tên> = through <điểm1> <điểm2>
+- line <tên> = through <điểm> perpendicular <đường_thẳng>
+- point <tên> = intersection <đường1> <đường2>
+- segment <tên> = <điểm1> <điểm2>
+
+QUAN TRỌNG: Khi bài toán yêu cầu "kẻ đường vuông góc", bạn PHẢI dùng lệnh 'line ... = through ... perpendicular ...' để tạo đường thẳng TRƯỚC, sau đó mới tìm giao điểm nếu cần. Tuyệt đối không dùng từ 'perpendicular' làm tên điểm.
+
+Quy ước: Canvas 700x500. Hình vuông mặc định A(200,200) B(400,200) C(400,400) D(200,400). Điểm trên cạnh nếu không xác định dùng t=0.6.
+Chỉ trả về các dòng lệnh GeoScript, không markdown, không giải thích.`;
+
+            const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+                body: JSON.stringify({
+                    model: model,
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: `Chuyển thành GeoScript: ${problemText}` }
+                    ],
+                    temperature: 0.2, max_tokens: 1024
+                })
+            });
+            if (!response.ok) { const e = await response.json(); throw new Error(e.error?.message || `Lỗi ${response.status}`); }
+            const data = await response.json();
+            let raw = data.choices[0].message.content;
+            raw = raw.replace(/```[a-z]*\n?/g, '').replace(/```/g, '').trim();
+            console.log('Script từ AI:', raw);
+            return raw;
+        }
+
+        async function handleSend() {
+            const apiKey = document.getElementById('apiKey').value.trim();
+            const problem = document.getElementById('problem').value.trim();
+            const model = document.getElementById('model').value;
+            const btn = document.getElementById('sendBtn');
+            clearAll();
+            if (!apiKey) { errorDiv.textContent = 'Vui lòng nhập Groq API Key.'; return; }
+            if (!problem) { errorDiv.textContent = 'Vui lòng nhập đề bài.'; return; }
+            btn.disabled = true; statusDiv.textContent = `⏳ Đang gọi ${model}...`;
+            try {
+                const script = await callGroq(apiKey, problem, model);
+                runGeoScript(script);
+                statusDiv.textContent = '✅ Đã vẽ xong.';
+            } catch (e) {
+                errorDiv.textContent = 'Lỗi: ' + e.message;
+                statusDiv.textContent = '';
+            } finally { btn.disabled = false; }
+        }
+    </script>
+</body>
+</html>
